@@ -1,11 +1,11 @@
+# main.py
+
 from fastapi import FastAPI
 from routers import analyze
-from routers import share   # ✅ 추가
-from services.analyze_service import analyze_emotion_logic as analyze_emotion
-
-
+from routers import share  # ✅ 추가된 라우터
 
 app = FastAPI()
 
+# 라우터 등록
 app.include_router(analyze.router)
-app.include_router(share.router)  # ✅ 추가
+app.include_router(share.router)
