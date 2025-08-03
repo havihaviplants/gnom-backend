@@ -1,5 +1,5 @@
 import os
-from openai import OpenAI
+import openai
 from prompts.analyze_prompt import generate_prompt
 from dotenv import load_dotenv
 import redis
@@ -48,12 +48,12 @@ redis_client = redis.Redis(
 )
 
 api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key)
+openai.api_key = os.getenv("OPENAI_API_KEY")  # 또는 .env에서 가져오기
 
 def analyze_emotion_logic(message: str) -> str:
     prompt = generate_prompt(message)
 
-    response = client.chat.completions.create(
+    response = openai.chatcompletions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "감정 분석 전문가로 행동하세요."},
