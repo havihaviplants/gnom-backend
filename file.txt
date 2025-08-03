@@ -1,0 +1,15 @@
+gnom-ai/
+├── backend/
+│   ├── app.py                ← FastAPI 연동
+│   ├── gpt_prompts.py        ← GPT 프롬프트 (full + free)
+│   ├── db/
+│   │   ├── schema.sql        ← 위에서 생성한 DB 스키마
+│   │   └── models.py         ← 선택사항 (SQLAlchemy 등 ORM 모델)
+├── frontend/
+│   └── components/           ← 감정 카드 UI 등
+├── data/
+│   ├── emotion_cards.json    ← 감정 카드 이모지+키워드+설명
+│   └── sample_messages.json  ← 테스트용 메시지
+├── docs/
+│   └── system_design.md      ← 시스템 설계 문서
+└── README.md                 ← 프로젝트 요약
