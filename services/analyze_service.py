@@ -67,6 +67,7 @@ def check_and_increment_call_count(user_id: str) -> bool:
 
 def analyze_emotion(message: str, relationship: str) -> dict:
     prompt = generate_prompt(message, relationship)
+    print("🧪 [GENERATED PROMPT]\n", prompt)
 
     try:
         response = openai.chat.completions.create(
@@ -80,36 +81,39 @@ def analyze_emotion(message: str, relationship: str) -> dict:
         )
 
         content = response.choices[0].message.content.strip()
+        print("🧪 [RAW GPT RESPONSE]\n", content)
 
         if content.startswith("```json"):
             content = content.replace("```json", "").replace("```", "").strip()
 
-        parsed = json.loads(content)
-        emotions = parsed.get("emotions", [])
-        reason = parsed.get("reason", "")
+        try:
+            parsed = json.loads(content)
+            emotions = parsed.get("emotions", [])
+            reason = parsed.get("reason", "")
 
-        return {
-            "emotion": emotions,
-            "insight": reason,
-            "tone": "해석 중",
-            "summary": content
-        }
+            return {
+                "emotion": emotions,
+                "insight": reason,
+                "tone": "해석 중",
+                "summary": content
+            }
 
-    except json.JSONDecodeError as e:
-        print("[JSON PARSE ERROR]", str(e))
-        print("[GPT RESPONSE RAW]", content)
-        return {
-            "emotion": [],
-            "insight": "GPT 응답을 파싱하는 데 실패했습니다.",
-            "tone": "unknown",
-            "summary": content
-        }
+        except json.JSONDecodeError as e:
+            print("[PARSE ERROR]", str(e))
+            print("[GPT RAW RESPONSE]", content)
+
+            return {
+                "emotion": [],
+                "insight": "GPT 응답을 파싱하는 데 실패했습니다.",
+                "tone": "unknown",
+                "summary": content
+            }
 
     except Exception as e:
         print("[UNEXPECTED ERROR]", str(e))
         return {
             "emotion": [],
-            "insight": "서버 오류 발생",
+            "insight": "서버 내부 오류 발생",
             "tone": "unknown",
             "summary": "분석에 실패했습니다."
         }
