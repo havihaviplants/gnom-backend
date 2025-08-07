@@ -39,10 +39,10 @@ def generate_prompt(message: str, relationship: str) -> str:
 
 출력 형식은 반드시 아래 JSON 형태만 허용됩니다:
 
-{
+{{
   "emotions": ["감정1", "감정2", "감정3"],
   "reason": "1~2문장 이내 설명"
-}
+}}
 
 ⚠️ 절대 다른 문장, 설명, 말머리, 마크다운 포맷 없이 위 JSON만 출력해주세요.
 
