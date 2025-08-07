@@ -4,6 +4,7 @@ import redis
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from prompts.analyze_prompt import generate_prompt
+import json
 
 # 🔐 환경 변수 로드
 load_dotenv()
@@ -78,11 +79,22 @@ def analyze_emotion(message: str) -> dict:
         max_tokens=300
     )
 
-    content = response.choices[0].message.content
+    content = response.choices[0].message.content.strip()
+
+    # 혹시 모를 마크다운 제거 (예방용)
+    if content.startswith("```json"):
+        content = content.replace("```json", "").replace("```", "").strip()
+
+    try:
+        parsed = json.loads(content)
+        emotions = parsed.get("emotions", [])
+        reason = parsed.get("reason", "")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"GPT 응답 JSON 파싱 실패: {e}\n내용:\n{content}")
 
     return {
-        "emotion": "추출 필요",
-        "insight": "추출 필요",
-        "tone": "추출 필요",
+        "emotion": emotions,
+        "insight": reason,
+        "tone": "해석 중",  # 필요 시 추가 분석
         "summary": content
     }
