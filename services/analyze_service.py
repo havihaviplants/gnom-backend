@@ -1,35 +1,36 @@
-
 import os
 import openai
-from prompts.analyze_prompt import generate_prompt
-from dotenv import load_dotenv
 import redis
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from prompts.analyze_prompt import generate_prompt
 
-# 하루 호출 제한 수
-MAX_CALLS_PER_DAY = 3
-
-# .env 파일 로드
+# 🔐 환경 변수 로드
 load_dotenv()
 
-# Redis 환경변수 가져오기
-redis_host = os.getenv("REDIS_HOST")
-redis_port = os.getenv("REDIS_PORT")
-redis_db = os.getenv("REDIS_DB")
-
-# Redis 클라이언트 설정
-if redis_host and redis_port and redis_db:
-    redis_client = redis.Redis(
-        host=redis_host,
-        port=int(redis_port),
-        db=int(redis_db),
-        decode_responses=True
-    )
-else:
-    redis_client = None  # 환경변수 없을 경우 None 처리
-
-# OpenAI API 키 설정
+# 🔑 OpenAI API 키 설정
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# 🧠 Redis 클라이언트 설정 (URL → 분리형 순)
+try:
+    REDIS_URL = os.getenv("REDIS_URL")
+    if REDIS_URL:
+        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    else:
+        redis_host = os.getenv("REDIS_HOST", "localhost")
+        redis_port = int(os.getenv("REDIS_PORT", 6379))
+        redis_db = int(os.getenv("REDIS_DB", 0))
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            decode_responses=True
+        )
+except Exception as e:
+    redis_client = None  # Redis 연결 실패 시 fallback
+
+# 📊 하루 호출 제한 수
+MAX_CALLS_PER_DAY = 3
 
 
 def get_today_key(user_id: str) -> str:
@@ -45,7 +46,7 @@ def get_seconds_until_midnight() -> int:
 
 def check_and_increment_call_count(user_id: str) -> bool:
     if not redis_client:
-        return True  # Redis 미연결 시 제한 없이 허용 (또는 False 처리 가능)
+        return True  # Redis 미연결 시 제한 없이 허용
 
     unlock_key = f"call_unlocked:{user_id}:{datetime.now().strftime('%Y-%m-%d')}"
     if redis_client.get(unlock_key):
@@ -57,19 +58,17 @@ def check_and_increment_call_count(user_id: str) -> bool:
     if count is None:
         redis_client.set(key, 1, ex=get_seconds_until_midnight())
         return True
+    elif int(count) >= MAX_CALLS_PER_DAY:
+        return False
     else:
-        count = int(count)
-        if count >= MAX_CALLS_PER_DAY:
-            return False
-        else:
-            redis_client.incr(key)
-            return True
+        redis_client.incr(key)
+        return True
 
 
 def analyze_emotion(message: str) -> dict:
     prompt = generate_prompt(message)
 
-    response = openai.chatcompletions.create(
+    response = openai.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "감정 분석 전문가로 행동하세요."},
@@ -79,7 +78,6 @@ def analyze_emotion(message: str) -> dict:
         max_tokens=300
     )
 
-    # 결과 응답 구조화
     content = response.choices[0].message.content
 
     return {

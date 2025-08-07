@@ -1,8 +1,5 @@
-# main.py
-
 from fastapi import FastAPI
-from routers import analyze
-from routers import share  # ✅ 추가된 라우터
+from routers import analyze, share
 
 app = FastAPI()
 
