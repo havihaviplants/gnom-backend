@@ -65,8 +65,8 @@ def check_and_increment_call_count(user_id: str) -> bool:
         return True  # Redis 오류 시 제한 없이 허용 (fallback)
 
 
-def analyze_emotion(message: str) -> dict:
-    prompt = generate_prompt(message)
+def analyze_emotion(message: str, relationship: str) -> dict:
+    prompt = generate_prompt(message, relationship)
 
     try:
         response = openai.chat.completions.create(

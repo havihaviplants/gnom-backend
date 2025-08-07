@@ -1,8 +1,9 @@
-def generate_prompt(message: str) -> str:
+def generate_prompt(message: str, relationship: str) -> str:
     return f"""
 당신은 감정을 정밀하게 분석하는 AI 심리 분석가입니다.
 
-사용자가 제공하는 텍스트는 상대방이 보낸 메시지이며,  
+사용자가 제공하는 텍스트는 상대방이 보낸 메시지이며,
+상대와의 관계는 "{relationship}" 입니다.
 이 텍스트에 담긴 감정의 종류를 아래 리스트 중 최대 3개까지 선택해 판단해주세요:
 
 - 친근함
