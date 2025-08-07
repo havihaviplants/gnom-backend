@@ -1,33 +1,35 @@
 import os
-import openai
-import redis
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
-from prompts.analyze_prompt import generate_prompt
 import json
+import redis
+import openai
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from prompts.analyze_prompt import generate_prompt
 
 # 🔐 환경 변수 로드
 load_dotenv()
-
-# 🔑 OpenAI API 키 설정
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# 🧠 Redis 클라이언트 설정 (URL → 분리형 우선)
-try:
-    REDIS_URL = os.getenv("REDIS_URL")
-    if REDIS_URL:
-        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-    else:
-        redis_client = redis.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", 6379)),
-            db=int(os.getenv("REDIS_DB", 0)),
-            decode_responses=True
-        )
-except Exception:
-    redis_client = None  # Redis 연결 실패 시 fallback
+# 🔌 Redis 연결
+def init_redis():
+    try:
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            return redis.from_url(redis_url, decode_responses=True)
+        else:
+            return redis.Redis(
+                host=os.getenv("REDIS_HOST", "localhost"),
+                port=int(os.getenv("REDIS_PORT", 6379)),
+                db=int(os.getenv("REDIS_DB", 0)),
+                decode_responses=True
+            )
+    except Exception as e:
+        print("[REDIS INIT ERROR]", str(e))
+        return None
 
-# 📊 하루 호출 제한 수
+redis_client = init_redis()
+
+# 📊 호출 제한 설정
 MAX_CALLS_PER_DAY = 3
 
 def get_today_key(user_id: str) -> str:
@@ -36,13 +38,13 @@ def get_today_key(user_id: str) -> str:
 
 def get_seconds_until_midnight() -> int:
     now = datetime.now()
-    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return int((tomorrow - now).total_seconds())
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((midnight - now).total_seconds())
 
 def check_and_increment_call_count(user_id: str) -> bool:
     try:
         if not redis_client:
-            return True  # Redis 미연결 시 제한 없음
+            return True
 
         unlock_key = f"call_unlocked:{user_id}:{datetime.now().strftime('%Y-%m-%d')}"
         if redis_client.get(unlock_key):
@@ -62,16 +64,17 @@ def check_and_increment_call_count(user_id: str) -> bool:
 
     except Exception as e:
         print("[REDIS ERROR]", str(e))
-        return True  # Redis 오류 시 제한 없이 허용 (fallback)
+        return True
 
-
+# 🧠 감정 분석
 def analyze_emotion(message: str, relationship: str) -> dict:
     prompt = generate_prompt(message, relationship)
-    print("🧪 [GENERATED PROMPT]\n", prompt)
+    print("🧪 [PROMPT]\n", prompt)
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o",
+        # ✅ 구버전 방식 사용
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "감정 분석 전문가로 행동하세요."},
                 {"role": "user", "content": prompt}
@@ -80,40 +83,29 @@ def analyze_emotion(message: str, relationship: str) -> dict:
             max_tokens=300
         )
 
-        content = response.choices[0].message.content.strip()
-        print("🧪 [RAW GPT RESPONSE]\n", content)
+        content = response["choices"][0]["message"]["content"].strip()
+        print("🧪 [GPT 응답]\n", content)
 
         if content.startswith("```json"):
             content = content.replace("```json", "").replace("```", "").strip()
 
         try:
             parsed = json.loads(content)
-            emotions = parsed.get("emotions", [])
-            reason = parsed.get("reason", "")
-
             return {
-                "emotion": emotions,
-                "insight": reason,
-                "tone": "해석 중",
-                "summary": content
+                "emotions": parsed.get("emotions", []),
+                "reason": parsed.get("reason", "")
             }
 
         except json.JSONDecodeError as e:
-            print("[PARSE ERROR]", str(e))
-            print("[GPT RAW RESPONSE]", content)
-
+            print("[JSON PARSE ERROR]", str(e))
             return {
-                "emotion": [],
-                "insight": "GPT 응답을 파싱하는 데 실패했습니다.",
-                "tone": "unknown",
-                "summary": content
+                "emotions": [],
+                "reason": "GPT 응답 파싱 실패"
             }
 
     except Exception as e:
-        print("[UNEXPECTED ERROR]", str(e))
+        print("[GPT REQUEST ERROR]", str(e))
         return {
-            "emotion": [],
-            "insight": "서버 내부 오류 발생",
-            "tone": "unknown",
-            "summary": "분석에 실패했습니다."
+            "emotions": [],
+            "reason": "서버 내부 오류 발생"
         }

@@ -1,8 +1,10 @@
 from pydantic import BaseModel
+from typing import List
 
 class AnalyzeRequest(BaseModel):
     message: str
-    relationship: str  # 🔥 이 줄 추가하면 100% 해결됨
+    relationship: str
 
 class AnalyzeResponse(BaseModel):
-    result: str  # 또는 summary, emotion 등 실제 응답 구조에 맞춰서 확장 가능
+    emotions: List[str]
+    reason: str
