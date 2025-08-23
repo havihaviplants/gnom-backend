@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 from datetime import datetime
 
+# ❗여기서만 쓰는 BaseModel은 필요 없음 (중복정의 제거)
+from models.analyze_model import AnalyzeRequest, AnalyzeResponse
 from services.analyze_service import (
     analyze_emotion,
     check_and_increment_call_count,
@@ -11,37 +12,36 @@ from services.analyze_service import (
 
 router = APIRouter()
 
+# 🔥 중복/섀도잉 제거: AnalyzeRequest를 다시 정의하지 않습니다.
 
-# ✅ 입력 모델
-class AnalyzeRequest(BaseModel):
-    message: str
-    relationship: str  # 예: 전남친, 친구, 직장상사 등
-
-
-# ✅ 출력 모델
-class AnalyzeResponse(BaseModel):
-    emotion: str
-    tone: str
-    summary: str
-    insight: str
-
-
-# ✅ 분석 요청
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(data: AnalyzeRequest):
-    user_id = "anonymous"  # 이후 프론트에서 user_id 넘기도록
+    user_id = "anonymous"  # TODO: 프론트에서 user_id 넘겨받게 개선
 
     if not check_and_increment_call_count(user_id):
         raise HTTPException(status_code=403, detail="하루 3회 감정 분석 제한을 초과했습니다.")
 
     try:
-        result = analyze_emotion(data.message, data.relationship)
-        return result
+        # 예시: raw = {"emotions": ["두려움"], "reason": "…"}
+        raw = analyze_emotion(data.message, data.relationship)  # sync 함수면 그대로 호출
+
+        emotions = (raw or {}).get("emotions") or []
+        reason = (raw or {}).get("reason") or ""
+
+        payload = {
+            "emotion": emotions,                             # List[str]
+            "tone": (emotions[0] if emotions else "중립"),    # str
+            "summary": (reason[:120] if reason else "분석 요약을 생성하지 못했습니다."),  # str
+            "insight": (reason or "추가 인사이트 없음."),      # str
+        }
+        return AnalyzeResponse(**payload)
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"분석 중 오류 발생: {str(e)}")
 
 
-# ✅ 광고 시청 등으로 제한 해제
 @router.post("/unlock")
 async def unlock_limit(request: Request):
     body = await request.json()
