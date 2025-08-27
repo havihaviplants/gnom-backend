@@ -1,17 +1,31 @@
 import os
 import json
-import redis
-import openai
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from prompts.analyze_prompt import generate_prompt
 
+# (v1.0) 호출 제한 토글: 기본 끔
+LIMIT_ENABLED = os.getenv("ANALYZE_LIMIT_ENABLED", "false").lower() == "true"
+
 # 🔐 환경 변수 로드
 load_dotenv()
+
+# OpenAI (당신 프로젝트에 맞게 유지)
+import openai
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# 🔌 Redis 연결
+# redis 안전 import (없어도 앱이 죽지 않도록)
+try:
+    import redis  # type: ignore
+except Exception:
+    redis = None
+
+# 🔌 Redis 연결 (제한 토글이 켜진 경우에만 시도)
 def init_redis():
+    if not LIMIT_ENABLED:
+        return None
+    if redis is None:
+        return None
     try:
         redis_url = os.getenv("REDIS_URL")
         if redis_url:
@@ -30,7 +44,7 @@ def init_redis():
 redis_client = init_redis()
 
 # 📊 호출 제한 설정
-MAX_CALLS_PER_DAY = 3
+MAX_CALLS_PER_DAY = int(os.getenv("MAX_CALLS_PER_DAY", "3"))
 
 def get_today_key(user_id: str) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
@@ -42,6 +56,11 @@ def get_seconds_until_midnight() -> int:
     return int((midnight - now).total_seconds())
 
 def check_and_increment_call_count(user_id: str) -> bool:
+    # v1.0: 제한 끔 → 항상 허용
+    if not LIMIT_ENABLED:
+        return True
+
+    # 제한을 켠 경우에만 Redis 카운트, 실패 시에도 허용
     try:
         if not redis_client:
             return True
@@ -64,7 +83,9 @@ def check_and_increment_call_count(user_id: str) -> bool:
 
     except Exception as e:
         print("[REDIS ERROR]", str(e))
+        # Redis 문제는 v1.0에서 절대 사용자를 막지 않음
         return True
+
 
 # 🧠 감정 분석
 def analyze_emotion(message: str, relationship: str) -> dict:
