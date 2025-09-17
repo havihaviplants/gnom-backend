@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime
 
@@ -51,3 +52,6 @@ async def unlock_limit(request: Request):
 
     redis_client.set(redis_key, 1, ex=get_seconds_until_midnight())
     return {"status": "unlocked", "message": "오늘 분석 제한이 해제되었습니다."}
+
+print(">>> 현재 실행 중인 파일 경로:", __file__)
+print(">>> 현재 작업 디렉토리:", os.getcwd())
