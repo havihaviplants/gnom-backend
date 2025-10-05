@@ -158,3 +158,16 @@ def analyze_emotion(message: str, relationship: str) -> dict:
             "tags": ["중립"],
             "emojis": ["💬","💬","💬"]
         }
+    
+    # services/analyze_service.py
+
+# ... 기존 import/코드 ...
+
+def check_and_increment_call_count(user_id: str | None) -> tuple[bool, int]:
+    """
+    Rate limit 비활성화일 때도 라우터가 안정적으로 참조하도록 하는 더미 함수.
+    returns: (allowed, current_count)
+    """
+    # LIMIT이 꺼져있다면 항상 허용
+    return True, 0
+
