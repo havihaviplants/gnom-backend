@@ -10,8 +10,7 @@ class AnalyzeResponse(BaseModel):
     reason: str
 
 class AnalyzeResponse(BaseModel):
-    # 프론트에서 쓰는 필드 이름에 맞춰 둔다
-    emotion: List[str]           # 최대 3개 감정 라벨
-    tone: str                    # 주 톤(대표 감정)
-    summary: str                 # 한 줄 요약
-    insight: str                 # 해석/한줄 인사이트
+    interpretation: str   # 해석 본문
+    insight: str          # 한 줄 통찰
+    tags: List[str]       # 감정 분류(최대 3개)
+    emojis: List[str]     # 이모지 3개
