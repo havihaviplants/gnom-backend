@@ -6,10 +6,6 @@ class AnalyzeRequest(BaseModel):
     relationship: str
 
 class AnalyzeResponse(BaseModel):
-    emotions: List[str]
-    reason: str
-
-class AnalyzeResponse(BaseModel):
     interpretation: str   # 해석 본문
     insight: str          # 한 줄 통찰
     tags: List[str]       # 감정 분류(최대 3개)
