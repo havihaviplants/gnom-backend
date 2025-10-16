@@ -21,6 +21,9 @@ app.add_middleware(
 # 라우터 장착
 app.include_router(analyze.router)
 app.include_router(share.router)
+# 라우터 장착 (둘 다 허용: /analyze 와 /api/analyze)
+app.include_router(analyze.router, prefix="/api")  # ✅ 추가: /api/analyze
+
 
 @app.get("/")
 def health():
