@@ -1,30 +1,26 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import analyze, share
 
-app = FastAPI(
-    title="Gnom Backend",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+app = FastAPI(title="gnom-backend")
 
-# CORS: Dev Client/웹 프론트 실험을 위해 허용 폭 넓게
+# CORS (필요시 도메인 제한)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 필요 시 특정 도메인으로 제한
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 라우터 장착
-app.include_router(analyze.router)
-app.include_router(share.router)
-# 라우터 장착 (둘 다 허용: /analyze 와 /api/analyze)
-app.include_router(analyze.router, prefix="/api")  # ✅ 추가: /api/analyze
-
-
-@app.get("/")
+@app.get("/healthz")
 def health():
     return {"status": "ok", "service": "gnom-backend"}
+
+# --- 라우터 장착 ---
+from routers import license as license_router
+from routers import iap as iap_router
+# from routers import analyze as analyze_router  # 있으면 주석 해제
+
+app.include_router(license_router.router)
+app.include_router(iap_router.router)
+# app.include_router(analyze_router.router)
