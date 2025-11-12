@@ -1,18 +1,13 @@
 # routers/share.py
-import uuid, json, os
+import uuid, json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from dependencies import get_store
 from services.license_service import LicenseStore
 
 router = APIRouter(prefix="/share", tags=["share"])
-S = LicenseStore()
 R = get_store()
-
-STORE_URL = os.getenv(
-    "STORE_URL",
-    "https://play.google.com/store/apps/details?id=com.leehyodong.gnomfrontend",
-)
+S = LicenseStore()
 
 class ShareCreateBody(BaseModel):
     user_id: str
@@ -21,44 +16,36 @@ class ShareCreateBody(BaseModel):
 
 class ShareCreateResp(BaseModel):
     share_id: str
-    share_url: str        # 안내용(스토어 링크)
+    share_url: str
     store_url: str | None = None
 
 class ShareClaimBody(BaseModel):
     user_id: str
     share_id: str
-    shared: bool = False  # 클라이언트가 실제 공유액션 성공 시 true로 보냄
 
 @router.post("", response_model=ShareCreateResp)
 @router.post("/", response_model=ShareCreateResp)
 def create(b: ShareCreateBody):
     """
-    공유 세션 생성.
-    - share:{id} 저장(24h)
-    - 실제 전송 여부 판단은 클라이언트가 shared=true로 보내는지로 처리
-      (요구사항: '실제 전송을 탭하면 지급, 공유창만 띄우고 취소하면 미지급')
+    - share:{id}에 세션 저장(30분)
+    - share_url/store_url은 앱에서 메시지 구성할 때 사용
     """
     share_id = uuid.uuid4().hex[:12]
     payload = {"user_id": b.user_id, "title": b.title, "summary": b.summary or ""}
-    R.set(f"share:{share_id}", json.dumps(payload), ttl_seconds=60 * 60 * 24)
-    return {"share_id": share_id, "share_url": STORE_URL, "store_url": STORE_URL}
+    R.set(f"share:{share_id}", json.dumps(payload), ttl_seconds=60 * 30)
+    # 설치/공개 페이지 링크(필요에 맞게 교체)
+    share_url = "https://play.google.com/store/apps/details?id=com.leehyodong.gnomfrontend"
+    return {"share_id": share_id, "share_url": share_url, "store_url": share_url}
 
 @router.post("/claim")
 def claim(b: ShareClaimBody):
     """
-    지급 규칙:
-    - 유효한 share_id
-    - shared == True (클라에서 RN Share.sharedAction일 때만 호출)
-    - 동일 share_id 중복지급 방지
-    - 하루 2회 한도, 1회당 +1
+    자동 지급 금지. 사용자가 명시적으로 '보상받기'를 누를 때만 지급.
+    - 동일 share_id 중복 차단
+    - 하루 2회 한도(+1씩)
     """
     if not R.get(f"share:{b.share_id}"):
         raise HTTPException(status_code=404, detail="INVALID_SHARE_ID")
-
-    if not b.shared:
-        # 클라이언트가 공유 취소/닫기한 케이스
-        raise HTTPException(status_code=412, detail="SHARE_NOT_CONFIRMED")
-
     if R.get(f"claim:{b.share_id}"):
         raise HTTPException(status_code=409, detail="ALREADY_CLAIMED")
 

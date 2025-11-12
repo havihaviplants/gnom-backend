@@ -1,107 +1,99 @@
-# back/services/license_service.py
-import json
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional
+# services/license_service.py
+import datetime as dt
+from typing import Optional, Tuple
+
 from dependencies import get_store
 
-UTC = timezone.utc
+def _today_str(tz: dt.tzinfo | None = None) -> str:
+    return dt.datetime.now(tz).strftime("%Y%m%d")
 
 class LicenseStore:
+    """
+    - free: 최초 부트스트랩 무료권(예: 2)
+    - ticket: 1회권
+    - pass_until: ISO datetime (패스 만료 시각)
+    - 공유 보상: 하루 +1, 최대 2회
+    """
     def __init__(self):
-        self.r = get_store()
+        self.R = get_store()
 
-    # Key schema
-    def k_free(self, u: str) -> str: return f"free:{u}"                 # int
-    def k_ticket(self, u: str) -> str: return f"ticket:{u}"             # int
-    def k_pass(self, u: str) -> str: return f"pass:{u}"                 # json {"active": bool, "until": iso}
-    def k_share_cnt_day(self, u: str, day: str) -> str: return f"sharecnt:{u}:{day}"  # 일일 리워드 횟수
+    # ---- 내부 KV 유틸 ----
+    def _k(self, user_id: str, name: str) -> str:
+        return f"user:{user_id}:{name}"
 
-    # --- helpers
-    def _now(self) -> datetime:
-        return datetime.now(tz=UTC)
-
-    def _daykey(self) -> str:
-        return self._now().strftime("%Y-%m-%d")
-
-    def _load_pass(self, user_id: str) -> Dict[str, Any]:
-        raw = self.r.get(self.k_pass(user_id))
-        if not raw:
-            return {"active": False, "until": None}
+    def _get_int(self, key: str) -> int:
+        v = self.R.get(key)
         try:
-            data = json.loads(raw)
-        except:
-            data = {"active": False, "until": None}
-        # 만료 판정
-        if data.get("active") and data.get("until"):
+            return int(v)
+        except Exception:
+            return 0
+
+    def _set_int(self, key: str, val: int):
+        self.R.set(key, str(val))
+
+    # ---- 상태 ----
+    def status(self, user_id: str) -> dict:
+        free = self._get_int(self._k(user_id, "free"))
+        ticket = self._get_int(self._k(user_id, "ticket"))
+        pass_until = self.R.get(self._k(user_id, "pass_until"))
+        pass_active = False
+        if pass_until:
             try:
-                until = datetime.fromisoformat(data["until"])
-            except:
-                until = None
-            if not until or self._now() >= until:
-                data = {"active": False, "until": None}
-                self.r.set(self.k_pass(user_id), json.dumps(data))
-        return data
-
-    # --- public APIs used by routers
-
-    def bootstrap_free(self, user_id: str) -> Dict[str, Any]:
-        # 최초 진입 시 무료 2회 지급(이미 있으면 보존)
-        if self.r.get(self.k_free(user_id)) is None:
-            self.r.set(self.k_free(user_id), "2")
-        if self.r.get(self.k_ticket(user_id)) is None:
-            self.r.set(self.k_ticket(user_id), "0")
-        if self.r.get(self.k_pass(user_id)) is None:
-            self.r.set(self.k_pass(user_id), json.dumps({"active": False, "until": None}))
-        return self.status(user_id)
-
-    def status(self, user_id: str) -> Dict[str, Any]:
-        p = self._load_pass(user_id)
-        free = int(self.r.get(self.k_free(user_id)) or "0")
-        ticket = int(self.r.get(self.k_ticket(user_id)) or "0")
+                until = dt.datetime.fromisoformat(pass_until)
+                pass_active = until > dt.datetime.utcnow()
+            except Exception:
+                pass_active = False
         return {
             "free": free,
             "ticket": ticket,
-            "pass_active": bool(p.get("active")),
-            "pass_until": p.get("until"),
+            "pass_active": pass_active,
+            "pass_until": pass_until or "",
         }
 
-    def grant_one_time(self, user_id: str, amount: int = 1):
-        n = int(self.r.get(self.k_ticket(user_id)) or "0")
-        self.r.set(self.k_ticket(user_id), str(n + int(amount)))
+    # ---- 초기 지급 ----
+    def bootstrap(self, user_id: str, free_default: int = 2):
+        key = self._k(user_id, "boot")
+        if self.R.get(key):
+            return
+        self._set_int(self._k(user_id, "free"), free_default)
+        self.R.set(key, "1")
 
-    def grant_pass_days(self, user_id: str, days: int):
-        # days가 0 이하면 즉시 만료 처리
-        base = self._now()
-        until = base + timedelta(days=max(days, 0))
-        if days <= 0:
-            data = {"active": False, "until": None}
-        else:
-            data = {"active": True, "until": until.isoformat()}
-        self.r.set(self.k_pass(user_id), json.dumps(data))
-
-    def grant_share_daily(self, user_id: str, amount: int = 1, daily_limit: int = 2) -> bool:
-        key = self.k_share_cnt_day(user_id, self._daykey())
-        cnt = int(self.r.get(key) or "0")
-        if cnt >= daily_limit:
-            return False
-        new_cnt = cnt + 1
-        self.r.set(key, str(new_cnt), ttl_seconds=24*60*60)
-        cur = int(self.r.get(self.k_free(user_id)) or "0")
-        self.r.set(self.k_free(user_id), str(cur + int(amount)))
-        return True
-
+    # ---- 소비/검증 ----
+    def has_token(self, user_id: str) -> bool:
+        st = self.status(user_id)
+        return st["free"] > 0 or st["ticket"] > 0 or st["pass_active"]
 
     def consume_one(self, user_id: str) -> bool:
-        # pass > ticket > free
+        # 패스 우선 소모 X (패스는 카운트 안 줄음) → free → ticket 순
         st = self.status(user_id)
         if st["pass_active"]:
             return True
-        t = int(self.r.get(self.k_ticket(user_id)) or "0")
-        if t > 0:
-            self.r.set(self.k_ticket(user_id), str(t - 1))
+        if st["free"] > 0:
+            self._set_int(self._k(user_id, "free"), st["free"] - 1)
             return True
-        f = int(self.r.get(self.k_free(user_id)) or "0")
-        if f > 0:
-            self.r.set(self.k_free(user_id), str(f - 1))
+        if st["ticket"] > 0:
+            self._set_int(self._k(user_id, "ticket"), st["ticket"] - 1)
             return True
         return False
+
+    # ---- 지급 계열 (IAP/공유) ----
+    def grant_ticket(self, user_id: str, amount: int = 1):
+        cur = self._get_int(self._k(user_id, "ticket"))
+        self._set_int(self._k(user_id, "ticket"), cur + max(0, amount))
+
+    def activate_pass(self, user_id: str, days: int = 7):
+        now = dt.datetime.utcnow()
+        until = now + dt.timedelta(days=days)
+        self.R.set(self._k(user_id, "pass_until"), until.isoformat())
+
+    def grant_share_daily(self, user_id: str, amount: int = 1, daily_limit: int = 2) -> bool:
+        # 하루 합계가 daily_limit 넘으면 False
+        today = _today_str()
+        kcnt = f"sharecnt:{user_id}:{today}"
+        cur = self._get_int(kcnt)
+        if cur >= daily_limit:
+            return False
+        # 지급
+        self.grant_ticket(user_id, amount=amount)
+        self._set_int(kcnt, cur + 1)
+        return True
