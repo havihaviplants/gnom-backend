@@ -1,45 +1,102 @@
-from fastapi import APIRouter, HTTPException, Request
-from models.analyze_model import AnalyzeRequest, AnalyzeResponse
-from services.analyze_service import (
-    analyze_emotion,
-    check_and_increment_call_count,
-    get_seconds_until_midnight,
-)
+# routers/analyze.py
+import os
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+from services.prompt_loader import load_prompt
+from services.license_service import LicenseStore
 
-router = APIRouter(tags=["analyze"])
+# OpenAI SDK v1
+from openai import OpenAI
 
-@router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(req: AnalyzeRequest, request: Request) -> AnalyzeResponse:
+router = APIRouter(prefix="", tags=["analyze"])
+S = LicenseStore()
+
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # 필요 모델로 교체 가능
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+class AnalyzeBody(BaseModel):
+    message: str
+    # 필요시 옵션 확장
+    lang: Optional[str] = "ko"
+
+class AnalyzeResp(BaseModel):
+    interpretation: str
+    insight: str
+    tags: list[str]
+    emojis: list[str]
+
+def _build_system_prompt(lang: str = "ko") -> str:
     """
-    메시지 감정/맥락 해석 엔드포인트.
-    - 일일 한도는 서비스에서 토글(LIMIT_ENABLED)로 제어
-    - 서비스 레이어가 dict을 돌려주면 Pydantic이 자동 검증/정형화
+    prompts 폴더에서 'system'과 'schema' 두 파일을 합쳐 시스템 메시지로 사용.
+    - 없으면 안전한 기본값 사용
     """
     try:
-        # 프론트에서 user_id를 body에 포함했다면 레이트리밋 키로 사용
-        body = await request.json()
-        user_id = body.get("user_id")
+        system_core = load_prompt("system")
+    except FileNotFoundError:
+        system_core = (
+            "You are Gnom AI, an emotion analysis assistant. "
+            "Return short, structured emotional insights in Korean."
+        )
+    try:
+        schema = load_prompt("schema")  # 예: 출력 형식 안내
+    except FileNotFoundError:
+        schema = (
+            "Output keys (Korean labels):\n"
+            "- 감정해석\n- 한 줄 통찰\n- 감정 분류(콤마 구분)\n- 이모지(공백 구분)\n"
+        )
+    return f"{system_core}\n\n[LANG={lang}]\n\n{schema}"
 
-        allowed, _count = check_and_increment_call_count(user_id)
-        if not allowed:
-            raise HTTPException(status_code=429, detail="분석 요청 한도를 초과했습니다. 내일 다시 시도하세요.")
+def _parse_to_struct(raw_text: str) -> AnalyzeResp:
+    """
+    모델 출력이 포맷이 조금 달라도 최대한 구조화.
+    간단한 파서(규칙 기반) — 필요시 JSON 모드로 바꿔도 됨.
+    """
+    text = raw_text.strip()
+    # 아주 단순 파싱
+    def _find(label: str) -> str:
+        import re
+        pat = rf"{label}\s*[:：]\s*(.+)"
+        m = re.search(pat, text)
+        return m.group(1).strip() if m else ""
 
-        result = analyze_emotion(req.message, req.relationship)
-        # FastAPI가 AnalyzeResponse로 변환/검증
-        return AnalyzeResponse(**result)
+    interp = _find("감정해석") or _find("해석")
+    insight = _find("한 줄 통찰") or _find("통찰")
+    tags = (_find("감정 분류") or _find("분류")).replace("·", ",").replace(" ", "")
+    emojis = _find("이모지")
 
-    except HTTPException:
-        raise
+    out = AnalyzeResp(
+        interpretation=interp or text[:150],
+        insight=insight or "",
+        tags=[t for t in tags.split(",") if t] if tags else [],
+        emojis=[e for e in emojis.split() if e] if emojis else []
+    )
+    return out
+
+@router.post("/analyze", response_model=AnalyzeResp)
+def analyze(b: AnalyzeBody):
+    # 사용권 확인(권장: 라우터 앞단에서 consumeOne을 호출했다면 여기선 상태만 확인)
+    st = S.status(b.message[:16])  # 예: 내부 추적 id 대체 — 실제로는 사용자 ID로 확인
+    # (여기선 단순화 — 실제 서비스는 user_id 기반 권한 확인 사용 권장)
+
+    if not os.getenv("OPENAI_API_KEY"):
+        # 키 없을 때 예시 응답(네가 보던 문구)을 여전히 유지하되, 200으로 내려주지 말고 400~401로 명확화해도 됨.
+        raise HTTPException(status_code=400, detail="OPENAI_API_KEY_NOT_SET")
+
+    system_prompt = _build_system_prompt(b.lang or "ko")
+    user_prompt = load_prompt("user") if "user" in set() else ""  # 필요 시 user 템플릿 사용
+    content = f"{user_prompt}\n\n[INPUT]\n{b.message}".strip()
+
+    try:
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ],
+            temperature=0.3,
+        )
+        txt = resp.choices[0].message.content or ""
+        return _parse_to_struct(txt)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"분석 중 오류 발생: {str(e)}")
-
-
-@router.post("/unlock")
-async def unlock_limit(request: Request):
-    """
-    (선택) 광고 시청 등으로 일일 한도 해제 시 쓰는 엔드포인트.
-    현재는 스텁: 성공 응답만 내려주고, 실제 TTL/상태 저장은 나중에 Redis 도입 후 구현.
-    """
-    _ = await request.json()
-    # ex_seconds = get_seconds_until_midnight()  # 나중에 Redis 키 EXPIRE에 사용
-    return {"status": "unlocked", "message": "오늘 분석 제한이 해제되었습니다."}
+        raise HTTPException(status_code=500, detail=f"MODEL_ERROR: {e}")

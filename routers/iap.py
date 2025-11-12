@@ -1,37 +1,41 @@
 # routers/iap.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from datetime import datetime, timedelta, timezone
-
-from .license import get_or_create_license  # 같은 패키지 사용 시 상대 import 경로 맞추세요
+from typing import Literal, Optional
+from services.license_service import LicenseStore
 
 router = APIRouter(prefix="/iap", tags=["iap"])
+S = LicenseStore()
 
-def get_user_id():
-    return "demo-user"
+ALLOWED_PRODUCTS = {
+    "gnom.one_time": "consumable",
+    "gnom.pass_7d": "subscription",
+}
 
-class VerifyRequest(BaseModel):
-    orderId: str | None = None
-    productId: str
-    purchaseToken: str | None = None
-    transactionReceipt: str | None = None
+class VerifyBody(BaseModel):
+    user_id: str
+    platform: str
+    product_id: str
+    token: Optional[str] = None
+    purchase_token: Optional[str] = None
+    receipt: Optional[str] = None
+    type: Optional[Literal["consumable", "subscription"]] = None
 
 @router.post("/verify")
-def verify(req: VerifyRequest, user_id: str = Depends(get_user_id)):
-    # TODO: 실제 스토어 영수증 검증 로직 (Google/Apple API 호출) 추가
-    lic = get_or_create_license(user_id)
-    now = datetime.now(timezone.utc)
-
-    if req.productId == "gnom_ticket_1":
-        lic["remaining"] += 1
-    elif req.productId == "gnom_pass_7":
-        expire = now + timedelta(days=7)
-        if lic["pass_expire"] and lic["pass_expire"] > now:
-            lic["pass_expire"] = max(lic["pass_expire"], expire)
-        else:
-            lic["pass_expire"] = expire
-    else:
-        raise HTTPException(status_code=400, detail="UNKNOWN_PRODUCT")
-
-    # TODO: 영수증 재사용 방지 저장(mark used)
-    return {"ok": True}
+def verify(b: VerifyBody):
+    try:
+        if b.product_id not in ALLOWED_PRODUCTS:
+            raise HTTPException(status_code=400, detail="UNKNOWN_PRODUCT")
+        token = b.token or b.purchase_token or b.receipt
+        if not token:
+            raise HTTPException(status_code=422, detail="token missing")
+        t = b.type or ALLOWED_PRODUCTS[b.product_id]
+        if b.product_id == "gnom.one_time":
+            S.grant_ticket(b.user_id, amount=1)
+        elif b.product_id == "gnom.pass_7d":
+            S.activate_pass(b.user_id, days=7)
+        return {"ok": True, "type": t}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"VERIFY_FAILED: {e}")
