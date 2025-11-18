@@ -9,19 +9,32 @@ S = LicenseStore()  # 싱글톤처럼 재사용
 class LicenseBootstrapBody(BaseModel):
     user_id: str
 
+class LicenseStatusBody(BaseModel):
+    user_id: str
+
 class LicenseConsumeBody(BaseModel):
     user_id: str
+
 
 @router.post("/bootstrap")
 def license_bootstrap(b: LicenseBootstrapBody):
     """
     최초 1회 무료 2회 지급용 엔드포인트.
-    이미 뭔가 지급된 상태면 그냥 True만 돌려줌.
+    이미 부트스트랩된 유저는 그냥 상태만 돌려줌.
     """
-    ok = S.bootstrap(b.user_id)  # ✅ 이름 수정: bootstrap_free -> bootstrap
-    if not ok:
-        raise HTTPException(status_code=500, detail="LICENSE_BOOTSTRAP_FAILED")
-    return {"ok": True}
+    # 부트스트랩만 수행 (리턴값 사용 X)
+    S.bootstrap(b.user_id)
+    # 항상 최신 상태를 반환해서 프론트에서 바로 st 세팅 가능하게.
+    return S.status(b.user_id)
+
+
+@router.post("/status")
+def license_status(b: LicenseStatusBody):
+    """
+    현재 무료권/티켓/7일 패스 상태 조회.
+    """
+    return S.status(b.user_id)
+
 
 @router.post("/consume")
 def license_consume(b: LicenseConsumeBody):
